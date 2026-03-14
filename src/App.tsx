@@ -18,6 +18,8 @@ import {
   Filter,
   UserCircle,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Calendar,
   Trash2,
   AlertTriangle,
@@ -25,8 +27,8 @@ import {
   XCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { format, parseISO, startOfMonth, endOfMonth, isWithinInterval, getMonth, getYear } from 'date-fns';
-import * as XLSX from 'xlsx';
+import { format, parseISO, startOfMonth, endOfMonth, isWithinInterval, getMonth, getYear, lastDayOfMonth, eachDayOfInterval } from 'date-fns';
+import XLSX from 'xlsx-js-style';
 import { storage, calculateDuration, formatMinutes, safeParseISO } from './storage';
 import { User, Company, TimeEntry, UserRole } from './types';
 import { supabaseService } from './services/supabaseService';
@@ -241,6 +243,7 @@ const ApontamentoView = ({ user }: { user: User }) => {
   const [startTime, setStartTime] = useState('08:00');
   const [endTime, setEndTime] = useState('12:00');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -291,126 +294,60 @@ const ApontamentoView = ({ user }: { user: User }) => {
       return;
     }
 
-    const newEntry: TimeEntry = {
+    const start = parseISO(date);
+    const end = parseISO(endDate);
+
+    if (end < start) {
+      alert('A data final deve ser posterior ou igual à data inicial');
+      return;
+    }
+
+    const days = eachDayOfInterval({ start, end });
+    const newEntries: TimeEntry[] = days.map(d => ({
       id: 'new',
       userId: user.id,
-      date,
+      date: format(d, 'yyyy-MM-dd'),
       startTime,
       endTime,
       totalMinutes: duration
-    };
+    }));
 
     try {
-      await supabaseService.saveEntry(newEntry);
-      await fetchEntries(); // Refresh to get real UUIDs from DB
-      alert('Ponto registrado com sucesso!');
+      await supabaseService.saveEntries(newEntries);
+      await fetchEntries(); 
     } catch (err) {
       console.error(err);
       alert('Erro ao salvar no banco de dados');
     }
   };
 
-  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      const bstr = evt.target?.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
-      const data = XLSX.utils.sheet_to_json(ws) as any[];
-
-      const newEntries: TimeEntry[] = [];
-      const errors: string[] = [];
-
-      data.forEach((row, index) => {
-        const rowNum = index + 2; 
-        let start = row['Entrada'];
-        let end = row['Saída'];
-        let d = row['Data'];
-
-        if (!start || !end || !d) {
-          errors.push(`Linha ${rowNum}: Dados incompletos.`);
-          return;
-        }
-
-        if (d instanceof Date) d = d.toISOString().split('T')[0];
-        
-        const startStr = String(start);
-        const endStr = String(end);
-        const dateStr = String(d);
-
-        const duration = calculateDuration(startStr, endStr);
-
-        if (duration <= 0) {
-          errors.push(`Linha ${rowNum}: Horário de saída deve ser após o horário de entrada.`);
-          return;
-        }
-
-        newEntries.push({
-          id: 'new',
-          userId: user.id,
-          date: dateStr,
-          startTime: startStr,
-          endTime: endStr,
-          totalMinutes: duration
-        });
-      });
-
-      if (newEntries.length > 0) {
-        try {
-          await supabaseService.saveEntries(newEntries);
-          await fetchEntries(); // Refresh to get real UUIDs from DB
-        } catch (err) {
-          console.error(err);
-          alert('Erro ao importar para o banco de dados');
-        }
-      }
-
-      let message = '';
-      if (newEntries.length > 0) {
-        message = `${newEntries.length} apontamentos importados com sucesso!`;
-      } else if (errors.length === 0) {
-        message = 'Nenhum dado encontrado na planilha.';
-      }
-
-      if (errors.length > 0) {
-        if (message) message += '\n\n';
-        message += `Atenção: Houve alguns registros com erro (${errors.length}).\n\nDetalhes dos erros:\n${errors.join('\n')}`;
-      }
+  const selectedDateEntries = useMemo(() => {
+    try {
+      const start = parseISO(date);
+      const end = parseISO(endDate);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return [];
       
-      alert(message);
-    };
-    reader.readAsBinaryString(file);
-    e.target.value = ''; 
-  };
+      return entries.filter(e => {
+        const entryDate = parseISO(e.date);
+        return isWithinInterval(entryDate, { start, end });
+      }).sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime));
+    } catch (e) {
+      return [];
+    }
+  }, [entries, date, endDate]);
 
-  const downloadTemplate = () => {
-    const template = [
-      { 'Data': '2026-03-13', 'Entrada': '08:00', 'Saída': '12:00' },
-      { 'Data': '2026-03-13', 'Entrada': '13:00', 'Saída': '18:00' }
-    ];
-    const ws = XLSX.utils.json_to_sheet(template);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Template');
-    XLSX.writeFile(wb, 'Layout_Importacao_Ponto.xlsx');
-  };
-
-  const selectedDateEntries = entries.filter(e => e.date === date);
-  const totalSelectedDate = selectedDateEntries.reduce((acc, curr) => acc + curr.totalMinutes, 0);
+  const totalSelectedPeriod = selectedDateEntries.reduce((acc, curr) => acc + curr.totalMinutes, 0);
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-end">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Olá, {user.name}</h2>
-          <p className="text-slate-500">Registre seus horários para {format(safeParseISO(date), 'dd/MM/yyyy')}</p>
+          <p className="text-slate-500">Registre seus horários para o período selecionado</p>
         </div>
         <div className="text-right">
-          <p className="text-sm text-slate-500 uppercase tracking-wider font-semibold">Total no Dia</p>
-          <p className="text-3xl font-bold text-indigo-600">{formatMinutes(totalSelectedDate)}</p>
+          <p className="text-sm text-slate-500 uppercase tracking-wider font-semibold">Total no Período</p>
+          <p className="text-3xl font-bold text-indigo-600">{formatMinutes(totalSelectedPeriod)}</p>
         </div>
       </div>
 
@@ -418,15 +355,27 @@ const ApontamentoView = ({ user }: { user: User }) => {
         <div className="space-y-6">
           <Card title="Novo Apontamento">
             <form onSubmit={handleAddEntry} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Data</label>
-                <input 
-                  type="date" 
-                  className="input-field" 
-                  value={date}
-                  onChange={e => setDate(e.target.value)}
-                  required
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Data Início</label>
+                  <input 
+                    type="date" 
+                    className="input-field" 
+                    value={date}
+                    onChange={e => setDate(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Data Fim</label>
+                  <input 
+                    type="date" 
+                    className="input-field" 
+                    value={endDate}
+                    onChange={e => setEndDate(e.target.value)}
+                    required
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -451,45 +400,24 @@ const ApontamentoView = ({ user }: { user: User }) => {
                 </div>
               </div>
               <button type="submit" className="btn-primary w-full flex items-center justify-center gap-2">
-                <Plus size={18} /> Registrar Ponto
+                <Plus size={18} /> Registrar Período
               </button>
             </form>
           </Card>
-
-          <Card title="Importação em Massa">
-            <div className="space-y-4">
-              <button 
-                onClick={downloadTemplate}
-                className="w-full btn-secondary flex items-center justify-center gap-2 text-sm"
-              >
-                <Download size={16} /> Baixar Planilha Layout
-              </button>
-              <div className="relative">
-                <input 
-                  type="file" 
-                  accept=".xlsx, .xls" 
-                  onChange={handleImportExcel}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-                <div className="btn-secondary w-full flex items-center justify-center gap-2 text-sm border-dashed border-2">
-                  <FileText size={16} /> Importar Planilha
-                </div>
-              </div>
-            </div>
-          </Card>
         </div>
 
-        <Card title={`Apontamentos de ${format(safeParseISO(date), 'dd/MM/yyyy')}`} className="lg:col-span-2">
+        <Card title={`Apontamentos de ${format(safeParseISO(date), 'dd/MM/yyyy')} até ${format(safeParseISO(endDate), 'dd/MM/yyyy')}`} className="lg:col-span-2">
           {selectedDateEntries.length === 0 ? (
             <div className="text-center py-12 text-slate-400">
               <Clock size={48} className="mx-auto mb-4 opacity-20" />
-              <p>Nenhum registro para esta data</p>
+              <p>Nenhum registro para este período</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
                   <tr className="text-xs uppercase text-slate-400 font-semibold border-b border-slate-100">
+                    <th className="pb-3">Data</th>
                     <th className="pb-3">Entrada</th>
                     <th className="pb-3">Saída</th>
                     <th className="pb-3">Duração</th>
@@ -499,6 +427,7 @@ const ApontamentoView = ({ user }: { user: User }) => {
                 <tbody>
                   {selectedDateEntries.map(entry => (
                     <tr key={entry.id} className="data-row">
+                      <td className="py-4 text-sm">{format(safeParseISO(entry.date), 'dd/MM/yy')}</td>
                       <td className="py-4 font-mono">{entry.startTime}</td>
                       <td className="py-4 font-mono">{entry.endTime}</td>
                       <td className="py-4">{formatMinutes(entry.totalMinutes)}</td>
@@ -557,6 +486,7 @@ const HistoryView = ({ user, isAdmin = false }: { user: User, isAdmin?: boolean 
   const [selectedCompanyId, setSelectedCompanyId] = useState('all');
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
   const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean, entryId: string | null }>({ isOpen: false, entryId: null });
 
@@ -602,19 +532,46 @@ const HistoryView = ({ user, isAdmin = false }: { user: User, isAdmin?: boolean 
   const totalMinutes = filteredEntries.reduce((acc, curr) => acc + curr.totalMinutes, 0);
 
   const groupedEntries = useMemo(() => {
-    const groups: { [key: string]: { date: string, userId: string, entries: TimeEntry[], totalMinutes: number } } = {};
+    const groups: { [key: string]: { 
+      date: string, 
+      userId: string, 
+      entries: TimeEntry[], 
+      totalMinutes: number,
+      firstStartTime: string,
+      lastEndTime: string
+    } } = {};
     
     filteredEntries.forEach(e => {
       const key = `${e.userId}_${e.date}`;
       if (!groups[key]) {
-        groups[key] = { date: e.date, userId: e.userId, entries: [], totalMinutes: 0 };
+        groups[key] = { 
+          date: e.date, 
+          userId: e.userId, 
+          entries: [], 
+          totalMinutes: 0,
+          firstStartTime: e.startTime,
+          lastEndTime: e.endTime
+        };
       }
       groups[key].entries.push(e);
       groups[key].totalMinutes += e.totalMinutes;
+      
+      if (e.startTime < groups[key].firstStartTime) groups[key].firstStartTime = e.startTime;
+      if (e.endTime > groups[key].lastEndTime) groups[key].lastEndTime = e.endTime;
     });
     
-    return Object.values(groups).sort((a, b) => b.date.localeCompare(a.date));
+    return Object.values(groups).sort((a, b) => a.date.localeCompare(b.date));
   }, [filteredEntries]);
+
+  const toggleRow = (key: string) => {
+    const newExpanded = new Set(expandedRows);
+    if (newExpanded.has(key)) {
+      newExpanded.delete(key);
+    } else {
+      newExpanded.add(key);
+    }
+    setExpandedRows(newExpanded);
+  };
 
   const exportToExcel = () => {
     const data = filteredEntries.map(e => {
@@ -719,29 +676,28 @@ const HistoryView = ({ user, isAdmin = false }: { user: User, isAdmin?: boolean 
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50/50 text-xs text-slate-400 font-medium border-b border-slate-100">
+                <th className="px-6 py-4 font-normal w-10"></th>
                 {isAdmin && <th className="px-6 py-4 font-normal">Empresa</th>}
                 {isAdmin && <th className="px-6 py-4 font-normal">Funcionário</th>}
                 <th className="px-6 py-4 font-normal">Data</th>
-                <th className="px-6 py-4 font-normal">Entrada 1</th>
-                <th className="px-6 py-4 font-normal">Saída 1</th>
-                <th className="px-6 py-4 font-normal">Entrada 2</th>
-                <th className="px-6 py-4 font-normal">Saída 2</th>
-                <th className="px-6 py-4 font-normal">Total</th>
-                <th className="px-6 py-4 font-normal text-right"></th>
+                <th className="px-6 py-4 font-normal">Primeira Entrada</th>
+                <th className="px-6 py-4 font-normal">Última Saída</th>
+                <th className="px-6 py-4 font-normal">Total do Dia</th>
+                <th className="px-6 py-4 font-normal text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {groupedEntries.length === 0 ? (
                 <tr>
-                  <td colSpan={isAdmin ? 9 : 7} className="py-12 text-center text-slate-400">
+                  <td colSpan={isAdmin ? 10 : 8} className="py-12 text-center text-slate-400">
                     Nenhum registro encontrado para este período
                   </td>
                 </tr>
               ) : (
                 groupedEntries.map(group => {
+                  const groupKey = `${group.userId}-${group.date}`;
+                  const isExpanded = expandedRows.has(groupKey);
                   const sortedEntries = [...group.entries].sort((a, b) => a.startTime.localeCompare(b.startTime));
-                  const e1 = sortedEntries[0];
-                  const e2 = sortedEntries[1];
                   const u = users.find(usr => usr.id === group.userId);
                   const c = companies.find(comp => comp.id === u?.companyId);
                   
@@ -750,42 +706,59 @@ const HistoryView = ({ user, isAdmin = false }: { user: User, isAdmin?: boolean 
                   else if (group.totalMinutes < 480) rowColor = "bg-yellow-50/50";
 
                   return (
-                    <tr key={`${group.userId}-${group.date}`} className={`${rowColor} transition-colors hover:bg-slate-50/80`}>
-                      {isAdmin && <td className="px-6 py-4 text-sm text-slate-600">{c?.name}</td>}
-                      {isAdmin && <td className="px-6 py-4 text-sm text-slate-600">{u?.name}</td>}
-                      <td className="px-6 py-4 text-sm text-slate-600">
-                        {format(safeParseISO(group.date), 'dd/MM/yyyy')}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-slate-600 font-mono">{e1?.startTime || '-'}</td>
-                      <td className="px-6 py-4 text-sm text-slate-600 font-mono">{e1?.endTime || '-'}</td>
-                      <td className="px-6 py-4 text-sm text-slate-600 font-mono">{e2?.startTime || '-'}</td>
-                      <td className="px-6 py-4 text-sm text-slate-600 font-mono">{e2?.endTime || '-'}</td>
-                      <td className="px-6 py-4 text-sm font-bold text-indigo-600">
-                        {formatMinutes(group.totalMinutes)}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end gap-2">
-                          {e1 && (
-                            <button 
-                              disabled={deletingId === e1.id}
-                              onClick={() => setConfirmDelete({ isOpen: true, entryId: e1.id })} 
-                              className={`text-slate-300 hover:text-red-500 transition-colors ${deletingId === e1.id ? 'opacity-50' : ''}`}
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          )}
-                          {e2 && (
-                            <button 
-                              disabled={deletingId === e2.id}
-                              onClick={() => setConfirmDelete({ isOpen: true, entryId: e2.id })} 
-                              className={`text-slate-300 hover:text-red-500 transition-colors ${deletingId === e2.id ? 'opacity-50' : ''}`}
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                    <React.Fragment key={groupKey}>
+                      <tr className={`${rowColor} transition-colors hover:bg-slate-50/80 cursor-pointer`} onClick={() => toggleRow(groupKey)}>
+                        <td className="px-6 py-4">
+                          {isExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                        </td>
+                        {isAdmin && <td className="px-6 py-4 text-sm text-slate-600">{c?.name}</td>}
+                        {isAdmin && <td className="px-6 py-4 text-sm text-slate-600">{u?.name}</td>}
+                        <td className="px-6 py-4 text-sm text-slate-600">
+                          {format(safeParseISO(group.date), 'dd/MM/yyyy')}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-600 font-mono">{group.firstStartTime}</td>
+                        <td className="px-6 py-4 text-sm text-slate-600 font-mono">{group.lastEndTime}</td>
+                        <td className="px-6 py-4 text-sm font-bold text-indigo-600">
+                          {formatMinutes(group.totalMinutes)}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <span className="text-xs text-slate-400">{group.entries.length} apontamentos</span>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={isAdmin ? 10 : 8} className="px-6 py-0 bg-slate-50/30">
+                            <div className="py-4 space-y-2">
+                              <div className="grid grid-cols-4 gap-4 text-[10px] uppercase tracking-wider font-bold text-slate-400 px-4 mb-2">
+                                <div>Entrada</div>
+                                <div>Saída</div>
+                                <div>Duração</div>
+                                <div className="text-right">Ações</div>
+                              </div>
+                              {sortedEntries.map(entry => (
+                                <div key={entry.id} className="grid grid-cols-4 gap-4 items-center bg-white p-3 rounded-lg border border-slate-100 shadow-sm">
+                                  <div className="text-sm font-mono text-slate-600">{entry.startTime}</div>
+                                  <div className="text-sm font-mono text-slate-600">{entry.endTime}</div>
+                                  <div className="text-sm text-slate-600">{formatMinutes(entry.totalMinutes)}</div>
+                                  <div className="text-right">
+                                    <button 
+                                      disabled={deletingId === entry.id}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setConfirmDelete({ isOpen: true, entryId: entry.id });
+                                      }}
+                                      className={`text-slate-300 hover:text-red-500 transition-colors ${deletingId === entry.id ? 'opacity-50' : ''}`}
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })
               )}
