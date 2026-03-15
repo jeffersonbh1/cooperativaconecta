@@ -24,11 +24,50 @@ import {
   Trash2,
   AlertTriangle,
   CheckCircle2,
-  XCircle
+  XCircle,
+  BarChart3,
+  TrendingUp,
+  Activity,
+  AlertCircle,
+  Heart,
+  ArrowUpRight,
+  ArrowDownRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { format, parseISO, startOfMonth, endOfMonth, isWithinInterval, getMonth, getYear, lastDayOfMonth, eachDayOfInterval } from 'date-fns';
+import { 
+  format, 
+  parseISO, 
+  startOfMonth, 
+  endOfMonth, 
+  isWithinInterval, 
+  getMonth, 
+  getYear, 
+  lastDayOfMonth, 
+  eachDayOfInterval,
+  startOfWeek,
+  endOfWeek,
+  eachWeekOfInterval,
+  subWeeks,
+  differenceInDays
+} from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import XLSX from 'xlsx-js-style';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  LineChart, 
+  Line, 
+  PieChart, 
+  Pie, 
+  Cell,
+  AreaChart,
+  Area
+} from 'recharts';
 import { storage, calculateDuration, formatMinutes, safeParseISO } from './storage';
 import { User, Company, TimeEntry, UserRole } from './types';
 import { supabaseService } from './services/supabaseService';
@@ -154,6 +193,453 @@ const ConfirmModal = ({
 
 // --- Views ---
 
+const DashboardView = () => {
+  const [entries, setEntries] = useState<TimeEntry[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedMonth, setSelectedMonth] = useState(getMonth(new Date()));
+  const [selectedYear, setSelectedYear] = useState(getYear(new Date()));
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('all');
+  const [selectedUserId, setSelectedUserId] = useState<string>('all');
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        const [entriesData, usersData, companiesData] = await Promise.all([
+          supabaseService.getEntries(),
+          supabaseService.getUsers(),
+          supabaseService.getCompanies()
+        ]);
+        setEntries(entriesData);
+        setUsers(usersData);
+        setCompanies(companiesData);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
+
+  const filteredUsers = useMemo(() => {
+    if (selectedCompanyId === 'all') return users;
+    return users.filter(u => u.companyId === selectedCompanyId);
+  }, [users, selectedCompanyId]);
+
+  const stats = useMemo(() => {
+    const monthStart = startOfMonth(new Date(selectedYear, selectedMonth));
+    const monthEnd = endOfMonth(new Date(selectedYear, selectedMonth));
+    
+    let filteredEntries = entries.filter(e => {
+      const d = safeParseISO(e.date);
+      return isWithinInterval(d, { start: monthStart, end: monthEnd });
+    });
+
+    if (selectedCompanyId !== 'all') {
+      const companyUserIds = users.filter(u => u.companyId === selectedCompanyId).map(u => u.id);
+      filteredEntries = filteredEntries.filter(e => companyUserIds.includes(e.userId));
+    }
+
+    if (selectedUserId !== 'all') {
+      filteredEntries = filteredEntries.filter(e => e.userId === selectedUserId);
+    }
+
+    const uniqueDays = new Set(filteredEntries.map(e => e.date));
+    const daysWorked = uniqueDays.size;
+    
+    // Identify relevant users based on filters
+    let targetUsers = users;
+    if (selectedCompanyId !== 'all') {
+      targetUsers = targetUsers.filter(u => u.companyId === selectedCompanyId);
+    }
+    if (selectedUserId !== 'all') {
+      targetUsers = targetUsers.filter(u => u.id === selectedUserId);
+    }
+
+    // Period for arrears: from month start to today (if in current month) or month end
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const arrearsEnd = today < monthEnd ? today : monthEnd;
+    
+    let totalDaysInArrears = 0;
+    if (monthStart <= today && targetUsers.length > 0) {
+      const periodDays = eachDayOfInterval({ start: monthStart, end: arrearsEnd });
+      const businessDaysInPeriod = periodDays.filter(d => d.getDay() !== 0 && d.getDay() !== 6);
+      const businessDayStrings = businessDaysInPeriod.map(d => format(d, 'yyyy-MM-dd'));
+
+      businessDayStrings.forEach(dayStr => {
+        const usersWithEntriesOnDay = new Set(filteredEntries.filter(e => e.date === dayStr).map(e => e.userId));
+        const isAnyUserMissing = targetUsers.some(u => !usersWithEntriesOnDay.has(u.id));
+        
+        if (isAnyUserMissing) {
+          totalDaysInArrears++;
+        }
+      });
+    }
+
+    const daysInArrears = totalDaysInArrears;
+
+    const totalMinutes = filteredEntries.reduce((acc, curr) => acc + curr.totalMinutes, 0);
+
+    // Better overtime calculation: group by user and date
+    const dailyTotals: { [key: string]: number } = {};
+    filteredEntries.forEach(e => {
+      const key = `${e.userId}_${e.date}`;
+      dailyTotals[key] = (dailyTotals[key] || 0) + e.totalMinutes;
+    });
+
+    let totalOvertime = 0;
+    let longJourneys = 0;
+    Object.values(dailyTotals).forEach(total => {
+      if (total > 480) totalOvertime += (total - 480);
+      if (total > 600) longJourneys++;
+    });
+
+    const avgMinutes = daysWorked > 0 ? totalMinutes / daysWorked : 0;
+
+    // Weekly data for charts
+    const weeks = eachWeekOfInterval({ start: monthStart, end: monthEnd });
+    const weeklyData = weeks.map((weekStart, index) => {
+      const weekEnd = endOfWeek(weekStart);
+      const weekEntries = filteredEntries.filter(e => isWithinInterval(safeParseISO(e.date), { start: weekStart, end: weekEnd }));
+      const weekMinutes = weekEntries.reduce((acc, curr) => acc + curr.totalMinutes, 0);
+      
+      const weekDailyTotals: { [key: string]: number } = {};
+      weekEntries.forEach(e => {
+        const key = `${e.userId}_${e.date}`;
+        weekDailyTotals[key] = (weekDailyTotals[key] || 0) + e.totalMinutes;
+      });
+      let weekOvertime = 0;
+      Object.values(weekDailyTotals).forEach(t => { if (t > 480) weekOvertime += (t - 480); });
+
+      return {
+        name: `Semana ${index + 1}`,
+        horas: Math.round(weekMinutes / 60),
+        extra: Math.round(weekOvertime / 60)
+      };
+    });
+
+    // Distribution data
+    const distribution = [
+      { name: 'Normal (< 8h)', value: Object.values(dailyTotals).filter(t => t <= 480).length },
+      { name: 'Extra (8h-10h)', value: Object.values(dailyTotals).filter(t => t > 480 && t <= 600).length },
+      { name: 'Crítico (> 10h)', value: Object.values(dailyTotals).filter(t => t > 600).length },
+    ];
+
+    // Alerts
+    const alerts = [];
+    const userOvertime: { [key: string]: number } = {};
+    const userLongJourneys: { [key: string]: number } = {};
+    
+    Object.keys(dailyTotals).forEach(key => {
+      const [userId] = key.split('_');
+      const total = dailyTotals[key];
+      if (total > 480) userOvertime[userId] = (userOvertime[userId] || 0) + (total - 480);
+      if (total > 600) userLongJourneys[userId] = (userLongJourneys[userId] || 0) + 1;
+    });
+
+    Object.entries(userOvertime).forEach(([userId, minutes]) => {
+      if (minutes > 1200) { // 20h
+        const u = users.find(usr => usr.id === userId);
+        alerts.push({
+          type: 'danger',
+          message: `${u?.name || 'Funcionário'} ultrapassou 20h extras no mês (${Math.round(minutes/60)}h)`
+        });
+      }
+    });
+
+    Object.entries(userLongJourneys).forEach(([userId, count]) => {
+      if (count >= 3) {
+        const u = users.find(usr => usr.id === userId);
+        alerts.push({
+          type: 'warning',
+          message: `${u?.name || 'Funcionário'} teve ${count} dias com jornada acima de 10h`
+        });
+      }
+    });
+
+    // Health Score
+    let healthScore = 100;
+    healthScore -= (totalOvertime / 60) * 2;
+    healthScore -= longJourneys * 5;
+    if (avgMinutes > 540) healthScore -= 20;
+    healthScore = Math.max(0, Math.min(100, healthScore));
+
+    return {
+      daysWorked,
+      daysInArrears,
+      totalOvertime,
+      avgMinutes,
+      weeklyData,
+      distribution,
+      alerts,
+      healthScore
+    };
+  }, [entries, users, selectedMonth, selectedYear, selectedCompanyId, selectedUserId]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
+
+  const getHealthStatus = (score: number) => {
+    if (score > 80) return { label: 'Saudável', color: 'text-emerald-500', bg: 'bg-emerald-50', icon: CheckCircle2 };
+    if (score > 50) return { label: 'Atenção', color: 'text-yellow-500', bg: 'bg-yellow-50', icon: AlertTriangle };
+    return { label: 'Sobrecarga', color: 'text-red-500', bg: 'bg-red-50', icon: Activity };
+  };
+
+  const health = getHealthStatus(stats.healthScore);
+
+  return (
+    <div className="space-y-8 pb-12">
+      {/* Header */}
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-800">Dashboard Administrativo</h2>
+          <p className="text-slate-500">Visão geral da jornada da equipe</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+          <select 
+            className="input-field py-2 flex-1 lg:flex-none"
+            value={selectedCompanyId}
+            onChange={e => {
+              setSelectedCompanyId(e.target.value);
+              setSelectedUserId('all');
+            }}
+          >
+            <option value="all">Todas as Empresas</option>
+            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+
+          <select 
+            className="input-field py-2 flex-1 lg:flex-none"
+            value={selectedUserId}
+            onChange={e => setSelectedUserId(e.target.value)}
+          >
+            <option value="all">Todos os Funcionários</option>
+            {filteredUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+
+          <select 
+            className="input-field py-2 flex-1 lg:flex-none"
+            value={selectedMonth}
+            onChange={e => setSelectedMonth(parseInt(e.target.value))}
+          >
+            {['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'].map((m, i) => (
+              <option key={m} value={i}>{m}</option>
+            ))}
+          </select>
+          <select 
+            className="input-field py-2 flex-1 lg:flex-none"
+            value={selectedYear}
+            onChange={e => setSelectedYear(parseInt(e.target.value))}
+          >
+            {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* Main Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
+              <Calendar size={20} />
+            </div>
+            <span className="text-xs font-bold text-slate-400 uppercase">Este Mês</span>
+          </div>
+          <h3 className="text-2xl font-bold text-slate-800">{stats.daysWorked}</h3>
+          <p className="text-sm text-slate-500">Dias trabalhados</p>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-10 h-10 bg-red-50 text-red-600 rounded-xl flex items-center justify-center">
+              <AlertCircle size={20} />
+            </div>
+            <span className="text-xs font-bold text-slate-400 uppercase">Pendências</span>
+          </div>
+          <h3 className="text-2xl font-bold text-slate-800">{stats.daysInArrears}</h3>
+          <p className="text-sm text-slate-500">Dias em atraso</p>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-10 h-10 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
+              <TrendingUp size={20} />
+            </div>
+            <span className="text-xs font-bold text-slate-400 uppercase">Extra</span>
+          </div>
+          <h3 className="text-2xl font-bold text-slate-800">{formatMinutes(stats.totalOvertime)}</h3>
+          <p className="text-sm text-slate-500">Horas extras no mês</p>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
+              <Clock size={20} />
+            </div>
+            <span className="text-xs font-bold text-slate-400 uppercase">Média</span>
+          </div>
+          <h3 className="text-2xl font-bold text-slate-800">{formatMinutes(Math.round(stats.avgMinutes))}</h3>
+          <p className="text-sm text-slate-500">Média de horas/dia</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Charts Section */}
+        <div className="lg:col-span-2 space-y-8">
+          <Card title="Horas Trabalhadas por Semana">
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={stats.weeklyData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                  <Tooltip 
+                    contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                    cursor={{fill: '#f8fafc'}}
+                  />
+                  <Bar dataKey="horas" fill="#4f46e5" radius={[4, 4, 0, 0]} name="Horas Normais" />
+                  <Bar dataKey="extra" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Horas Extras" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
+          <Card title="Evolução de Horas Extras">
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={stats.weeklyData}>
+                  <defs>
+                    <linearGradient id="colorExtra" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                  <Tooltip 
+                    contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                  />
+                  <Area type="monotone" dataKey="extra" stroke="#f59e0b" fillOpacity={1} fill="url(#colorExtra)" strokeWidth={3} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
+          {/* Smart Alerts */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest px-2">Alertas Inteligentes</h3>
+            {stats.alerts.length === 0 ? (
+              <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100 flex items-center gap-3">
+                <CheckCircle2 className="text-emerald-500 shrink-0" size={20} />
+                <p className="text-xs text-emerald-700 font-medium">Nenhum alerta crítico detectado no momento.</p>
+              </div>
+            ) : (
+              stats.alerts.map((alert, i) => (
+                <div key={i} className={`${alert.type === 'danger' ? 'bg-red-50 border-red-100' : 'bg-amber-50 border-amber-100'} p-4 rounded-xl border flex items-start gap-3`}>
+                  <AlertTriangle className={alert.type === 'danger' ? 'text-red-500' : 'text-amber-500'} size={20} />
+                  <p className={`text-xs ${alert.type === 'danger' ? 'text-red-700' : 'text-amber-700'} font-medium leading-tight`}>
+                    {alert.message}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Sidebar Section */}
+        <div className="space-y-8">
+          {/* Health Score Card */}
+          <div className="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center">
+            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Saúde da Jornada</h3>
+            <div className="relative inline-flex items-center justify-center mb-6">
+              <svg className="w-32 h-32 transform -rotate-90">
+                <circle
+                  cx="64"
+                  cy="64"
+                  r="58"
+                  stroke="currentColor"
+                  strokeWidth="8"
+                  fill="transparent"
+                  className="text-slate-100"
+                />
+                <circle
+                  cx="64"
+                  cy="64"
+                  r="58"
+                  stroke="currentColor"
+                  strokeWidth="8"
+                  fill="transparent"
+                  strokeDasharray={364}
+                  strokeDashoffset={364 - (364 * stats.healthScore) / 100}
+                  className={`${health.color} transition-all duration-1000 ease-out`}
+                />
+              </svg>
+              <div className="absolute flex flex-col items-center">
+                <span className="text-3xl font-bold text-slate-800">{stats.healthScore}</span>
+                <span className="text-[10px] text-slate-400 uppercase">Score</span>
+              </div>
+            </div>
+            <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-full ${health.bg} ${health.color} font-bold text-sm`}>
+              <health.icon size={16} />
+              {health.label}
+            </div>
+            <p className="mt-4 text-xs text-slate-500 leading-relaxed">
+              O score considera horas extras, jornadas longas e regularidade de descanso da equipe.
+            </p>
+          </div>
+
+          {/* Distribution Chart */}
+          <Card title="Distribuição de Jornada">
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={stats.distribution}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {[
+                      <Cell key="0" fill="#10b981" />,
+                      <Cell key="1" fill="#f59e0b" />,
+                      <Cell key="2" fill="#ef4444" />
+                    ]}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="space-y-2 mt-4">
+              {stats.distribution.map((item, i) => (
+                <div key={item.name} className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${['bg-emerald-500', 'bg-amber-500', 'bg-red-500'][i]}`}></div>
+                    <span className="text-slate-600">{item.name}</span>
+                  </div>
+                  <span className="font-bold text-slate-800">{item.value} dias</span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -196,7 +682,7 @@ const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
               onError={(e) => {
                 // Fallback if image not found
                 e.currentTarget.style.display = 'none';
-                e.currentTarget.parentElement!.innerHTML = '<div class="w-16 h-16 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-xl"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>';
+                e.currentTarget.parentElement!.innerHTML = '<div class="w-16 h-16 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-xl"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>';
               }}
             />
           </div>
@@ -1375,6 +1861,7 @@ export default function App() {
 
   const renderView = () => {
     switch (currentView) {
+      case 'dashboard': return <DashboardView />;
       case 'apontamento': return <ApontamentoView user={currentUser} />;
       case 'history': return <HistoryView user={currentUser} />;
       case 'profile': return <ProfileView user={currentUser} onUpdate={setCurrentUser} />;
@@ -1405,7 +1892,7 @@ export default function App() {
           />
           <div className="hidden flex items-center gap-3">
             <div className="w-10 h-10 bg-indigo-600 text-white rounded-xl flex items-center justify-center shadow-lg shadow-indigo-100">
-              <Clock size={20} />
+              <Users size={20} />
             </div>
             <span className="text-xl font-bold text-slate-800 whitespace-nowrap">Conecta</span>
           </div>
@@ -1430,6 +1917,12 @@ export default function App() {
           {currentUser.role === 'ADMIN' && (
             <>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-4 mt-6 mb-2">Administrativo</p>
+              <SidebarItem 
+                icon={BarChart3} 
+                label="Dashboard" 
+                active={currentView === 'dashboard'} 
+                onClick={() => setCurrentView('dashboard')} 
+              />
               <SidebarItem 
                 icon={FileText} 
                 label="Relatórios" 
