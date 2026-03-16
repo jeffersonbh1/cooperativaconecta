@@ -145,8 +145,8 @@ const ConfirmModal = ({
   title: string, 
   message: string,
   confirmText?: string,
-  cancelText?: string,
-  type?: "danger" | "warning" | "info"
+  cancelText?: string | null,
+  type?: "danger" | "warning" | "info" | "success"
 }) => (
   <AnimatePresence>
     {isOpen && (
@@ -159,20 +159,24 @@ const ConfirmModal = ({
         >
           <div className="p-6 text-center">
             <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${
-              type === 'danger' ? 'bg-red-50 text-red-500' : 'bg-amber-50 text-amber-500'
+              type === 'danger' ? 'bg-red-50 text-red-500' : 
+              type === 'success' ? 'bg-emerald-50 text-emerald-500' :
+              'bg-amber-50 text-amber-500'
             }`}>
-              <AlertTriangle size={32} />
+              {type === 'success' ? <CheckCircle2 size={32} /> : <AlertTriangle size={32} />}
             </div>
             <h3 className="text-xl font-bold text-slate-800 mb-2">{title}</h3>
             <p className="text-slate-500">{message}</p>
           </div>
           <div className="px-6 py-4 bg-slate-50 flex gap-3">
-            <button 
-              onClick={onClose} 
-              className="flex-1 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition-colors"
-            >
-              {cancelText}
-            </button>
+            {cancelText !== null && (
+              <button 
+                onClick={onClose} 
+                className="flex-1 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition-colors"
+              >
+                {cancelText}
+              </button>
+            )}
             <button 
               onClick={() => {
                 onConfirm();
@@ -1430,6 +1434,7 @@ const AdminCompaniesView = () => {
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
+  const [successModal, setSuccessModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
   const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean, companyId: string | null }>({ isOpen: false, companyId: null });
   const [error, setError] = useState<string | null>(null);
 
@@ -1473,7 +1478,7 @@ const AdminCompaniesView = () => {
       setNeighborhood('');
       setCity('');
       setState('SP');
-      alert('Empresa salva com sucesso!');
+      setSuccessModal({ isOpen: true, message: 'Empresa salva com sucesso!' });
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Erro ao salvar empresa.');
@@ -1620,6 +1625,17 @@ const AdminCompaniesView = () => {
         title="Confirmar Exclusão"
         message="Tem certeza que deseja excluir esta empresa? Esta ação não pode ser desfeita."
       />
+
+      <ConfirmModal 
+        isOpen={successModal.isOpen}
+        onClose={() => setSuccessModal({ ...successModal, isOpen: false })}
+        onConfirm={() => setSuccessModal({ ...successModal, isOpen: false })}
+        title="Sucesso"
+        message={successModal.message}
+        confirmText="OK"
+        cancelText={null}
+        type="success"
+      />
     </div>
   );
 };
@@ -1630,6 +1646,8 @@ const ProfileView = ({ user, onUpdate }: { user: User, onUpdate: (user: User) =>
   const [address, setAddress] = useState(user.address || '');
   const [password, setPassword] = useState('');
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [successModal, setSuccessModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
+  const [errorModal, setErrorModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
 
   useEffect(() => {
     supabaseService.getCompanies().then(setCompanies);
@@ -1650,10 +1668,10 @@ const ProfileView = ({ user, onUpdate }: { user: User, onUpdate: (user: User) =>
       await supabaseService.saveUser(updatedUser);
       storage.setCurrentUser(updatedUser);
       onUpdate(updatedUser);
-      alert('Perfil atualizado com sucesso!');
+      setSuccessModal({ isOpen: true, message: 'Perfil atualizado com sucesso!' });
       setPassword('');
-    } catch (err) {
-      alert('Erro ao atualizar perfil');
+    } catch (err: any) {
+      setErrorModal({ isOpen: true, message: 'Erro ao atualizar perfil: ' + err.message });
     }
   };
 
@@ -1724,6 +1742,28 @@ const ProfileView = ({ user, onUpdate }: { user: User, onUpdate: (user: User) =>
           </form>
         </Card>
       </div>
+
+      <ConfirmModal 
+        isOpen={successModal.isOpen}
+        onClose={() => setSuccessModal({ ...successModal, isOpen: false })}
+        onConfirm={() => setSuccessModal({ ...successModal, isOpen: false })}
+        title="Sucesso"
+        message={successModal.message}
+        confirmText="OK"
+        cancelText={null}
+        type="success"
+      />
+
+      <Modal 
+        isOpen={errorModal.isOpen} 
+        onClose={() => setErrorModal({ ...errorModal, isOpen: false })} 
+        title="Erro ao Atualizar"
+      >
+        <div className="flex items-center gap-3 text-red-600">
+          <XCircle size={24} />
+          <p>{errorModal.message}</p>
+        </div>
+      </Modal>
     </div>
   );
 };
@@ -1742,6 +1782,7 @@ const AdminUsersView = () => {
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
+  const [successModal, setSuccessModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
   const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean, userId: string | null }>({ isOpen: false, userId: null });
   const [error, setError] = useState<string | null>(null);
 
@@ -1791,7 +1832,7 @@ const AdminUsersView = () => {
       setPassword('');
       setPhone('');
       setAddress('');
-      alert('Usuário salvo com sucesso!');
+      setSuccessModal({ isOpen: true, message: 'Usuário salvo com sucesso!' });
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'Erro ao salvar usuário. Verifique se o e-mail já existe.');
@@ -1941,6 +1982,17 @@ const AdminUsersView = () => {
         title="Confirmar Exclusão"
         message="Tem certeza que deseja excluir este usuário? Esta ação não pode ser desfeita."
       />
+
+      <ConfirmModal 
+        isOpen={successModal.isOpen}
+        onClose={() => setSuccessModal({ ...successModal, isOpen: false })}
+        onConfirm={() => setSuccessModal({ ...successModal, isOpen: false })}
+        title="Sucesso"
+        message={successModal.message}
+        confirmText="OK"
+        cancelText={null}
+        type="success"
+      />
     </div>
   );
 };
@@ -1996,10 +2048,14 @@ export default function App() {
     setLoginMessage(undefined);
   };
 
-  const handleLogout = (message?: string) => {
+  const handleLogout = (message?: string | React.MouseEvent) => {
     storage.setCurrentUser(null);
     setCurrentUser(null);
-    if (message) setLoginMessage(message);
+    if (typeof message === 'string') {
+      setLoginMessage(message);
+    } else {
+      setLoginMessage(undefined);
+    }
   };
 
   if (!currentUser) {
