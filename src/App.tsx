@@ -191,6 +191,47 @@ const ConfirmModal = ({
   </AnimatePresence>
 );
 
+const AlertModal = ({ 
+  isOpen, 
+  onClose, 
+  title, 
+  message 
+}: { 
+  isOpen: boolean, 
+  onClose: () => void, 
+  title: string, 
+  message: string 
+}) => (
+  <AnimatePresence>
+    {isOpen && (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
+        >
+          <div className="p-6 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-50 text-amber-500 flex items-center justify-center">
+              <AlertTriangle size={32} />
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">{title}</h3>
+            <p className="text-slate-500">{message}</p>
+          </div>
+          <div className="px-6 py-4 bg-slate-50">
+            <button 
+              onClick={onClose} 
+              className="w-full px-4 py-2 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 transition-colors"
+            >
+              Entendi
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    )}
+  </AnimatePresence>
+);
+
 // --- Views ---
 
 const DashboardView = () => {
@@ -640,7 +681,7 @@ const DashboardView = () => {
   );
 };
 
-const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
+const LoginView = ({ onLogin, message }: { onLogin: (user: User) => void, message?: string }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -691,6 +732,12 @@ const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
         </div>
 
         <Card>
+          {message && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-3 text-amber-700 text-sm">
+              <AlertCircle size={18} />
+              <p>{message}</p>
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">E-mail</label>
@@ -728,12 +775,15 @@ const LoginView = ({ onLogin }: { onLogin: (user: User) => void }) => {
 const ApontamentoView = ({ user }: { user: User }) => {
   const [startTime, setStartTime] = useState('08:00');
   const [endTime, setEndTime] = useState('12:00');
+  const [startTime2, setStartTime2] = useState('00:00');
+  const [endTime2, setEndTime2] = useState('00:00');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
+  const [validationModal, setValidationModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
   const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean, entryId: string | null }>({ isOpen: false, entryId: null });
 
   const fetchEntries = async () => {
@@ -774,33 +824,69 @@ const ApontamentoView = ({ user }: { user: User }) => {
 
   const handleAddEntry = async (e: React.FormEvent) => {
     e.preventDefault();
-    const duration = calculateDuration(startTime, endTime);
-    if (duration <= 0) {
-      alert('Horário de saída deve ser após a entrada');
+    
+    // Validate first interval
+    const duration1 = calculateDuration(startTime, endTime);
+    if (duration1 <= 0) {
+      setValidationModal({ isOpen: true, message: 'O horário de saída 1 deve ser posterior ao horário de entrada 1.' });
       return;
+    }
+
+    // Check if second interval should be considered
+    const isInterval2Active = startTime2 !== '00:00' || endTime2 !== '00:00';
+    let duration2 = 0;
+    
+    if (isInterval2Active) {
+      duration2 = calculateDuration(startTime2, endTime2);
+      if (duration2 <= 0) {
+        setValidationModal({ isOpen: true, message: 'O horário de saída 2 deve ser posterior ao horário de entrada 2.' });
+        return;
+      }
     }
 
     const start = parseISO(date);
     const end = parseISO(endDate);
 
     if (end < start) {
-      alert('A data final deve ser posterior ou igual à data inicial');
+      setValidationModal({ isOpen: true, message: 'A data final deve ser posterior ou igual à data inicial.' });
       return;
     }
 
     const days = eachDayOfInterval({ start, end });
-    const newEntries: TimeEntry[] = days.map(d => ({
-      id: 'new',
-      userId: user.id,
-      date: format(d, 'yyyy-MM-dd'),
-      startTime,
-      endTime,
-      totalMinutes: duration
-    }));
+    const newEntries: TimeEntry[] = [];
+    
+    days.forEach(d => {
+      const dateStr = format(d, 'yyyy-MM-dd');
+      
+      // Add first interval
+      newEntries.push({
+        id: 'new',
+        userId: user.id,
+        date: dateStr,
+        startTime,
+        endTime,
+        totalMinutes: duration1
+      });
+      
+      // Add second interval if active
+      if (isInterval2Active) {
+        newEntries.push({
+          id: 'new',
+          userId: user.id,
+          date: dateStr,
+          startTime: startTime2,
+          endTime: endTime2,
+          totalMinutes: duration2
+        });
+      }
+    });
 
     try {
       await supabaseService.saveEntries(newEntries);
       await fetchEntries(); 
+      // Reset second interval to default
+      setStartTime2('00:00');
+      setEndTime2('00:00');
     } catch (err) {
       console.error(err);
       alert('Erro ao salvar no banco de dados');
@@ -885,6 +971,26 @@ const ApontamentoView = ({ user }: { user: User }) => {
                   />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Entrada 2</label>
+                  <input 
+                    type="time" 
+                    className="input-field" 
+                    value={startTime2}
+                    onChange={e => setStartTime2(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Saída 2</label>
+                  <input 
+                    type="time" 
+                    className="input-field" 
+                    value={endTime2}
+                    onChange={e => setEndTime2(e.target.value)}
+                  />
+                </div>
+              </div>
               <button type="submit" className="btn-primary w-full flex items-center justify-center gap-2">
                 <Plus size={18} /> Registrar Período
               </button>
@@ -950,6 +1056,13 @@ const ApontamentoView = ({ user }: { user: User }) => {
           </div>
         </div>
       </Modal>
+
+      <AlertModal 
+        isOpen={validationModal.isOpen}
+        onClose={() => setValidationModal({ ...validationModal, isOpen: false })}
+        title="Atenção"
+        message={validationModal.message}
+      />
 
       <ConfirmModal 
         isOpen={confirmDelete.isOpen}
@@ -1838,6 +1951,38 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState('apontamento');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [loginMessage, setLoginMessage] = useState<string | undefined>(undefined);
+
+  // Idle Timeout Logic (15 minutes)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const IDLE_TIMEOUT = 15 * 60 * 1000; // 15 minutes
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        handleLogout('Sua sessão expirou por inatividade. Por favor, entre novamente.');
+      }, IDLE_TIMEOUT);
+    };
+
+    // Events to track activity
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    
+    events.forEach(event => {
+      window.addEventListener(event, resetTimer);
+    });
+
+    resetTimer(); // Initial start
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      events.forEach(event => {
+        window.removeEventListener(event, resetTimer);
+      });
+    };
+  }, [currentUser]);
 
   useEffect(() => {
     const user = storage.getCurrentUser();
@@ -1848,15 +1993,17 @@ export default function App() {
     storage.setCurrentUser(user);
     setCurrentUser(user);
     setCurrentView('apontamento');
+    setLoginMessage(undefined);
   };
 
-  const handleLogout = () => {
+  const handleLogout = (message?: string) => {
     storage.setCurrentUser(null);
     setCurrentUser(null);
+    if (message) setLoginMessage(message);
   };
 
   if (!currentUser) {
-    return <LoginView onLogin={handleLogin} />;
+    return <LoginView onLogin={handleLogin} message={loginMessage} />;
   }
 
   const renderView = () => {
