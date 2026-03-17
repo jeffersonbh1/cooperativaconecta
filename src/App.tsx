@@ -72,6 +72,33 @@ import { storage, calculateDuration, formatMinutes, safeParseISO } from './stora
 import { User, Company, TimeEntry, UserRole } from './types';
 import { supabaseService } from './services/supabaseService';
 
+// --- Utils ---
+
+const maskCNPJ = (value: string) => {
+  const digits = value.replace(/\D/g, '');
+  return digits
+    .replace(/^(\d{2})(\d)/, '$1.$2')
+    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1/$2')
+    .replace(/(\d{4})(\d)/, '$1-$2')
+    .substring(0, 18);
+};
+
+const maskPhone = (value: string) => {
+  const digits = value.replace(/\D/g, '');
+  if (digits.length <= 10) {
+    return digits
+      .replace(/^(\d{2})(\d)/, '($1) $2')
+      .replace(/(\d{4})(\d)/, '$1-$2')
+      .substring(0, 14);
+  } else {
+    return digits
+      .replace(/^(\d{2})(\d)/, '($1) $2')
+      .replace(/(\d{5})(\d)/, '$1-$2')
+      .substring(0, 15);
+  }
+};
+
 // --- Components ---
 
 const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label: string, active: boolean, onClick: () => void }) => (
@@ -1435,6 +1462,7 @@ const AdminCompaniesView = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
   const [successModal, setSuccessModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
+  const [warningModal, setWarningModal] = useState<{ isOpen: boolean, title: string, message: string }>({ isOpen: false, title: '', message: '' });
   const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean, companyId: string | null }>({ isOpen: false, companyId: null });
   const [error, setError] = useState<string | null>(null);
 
@@ -1457,17 +1485,29 @@ const AdminCompaniesView = () => {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const companyData: Company = { 
-      id: editingCompany ? editingCompany.id : 'new', 
-      name, 
-      cnpj,
-      address,
-      neighborhood,
-      city,
-      state
-    };
-    
+
     try {
+      // Check if CNPJ already exists
+      const cnpjExists = await supabaseService.checkCNPJExists(cnpj, editingCompany?.id === 'new' ? undefined : editingCompany?.id);
+      if (cnpjExists) {
+        setWarningModal({
+          isOpen: true,
+          title: 'CNPJ já cadastrado',
+          message: 'Este CNPJ já está sendo utilizado por outra empresa. Por favor, verifique os dados.'
+        });
+        return;
+      }
+
+      const companyData: Company = { 
+        id: editingCompany ? editingCompany.id : 'new', 
+        name, 
+        cnpj,
+        address,
+        neighborhood,
+        city,
+        state
+      };
+      
       await supabaseService.saveCompany(companyData);
       await fetchCompanies();
       
@@ -1539,7 +1579,13 @@ const AdminCompaniesView = () => {
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">CNPJ</label>
-              <input className="input-field" value={cnpj} onChange={e => setCnpj(e.target.value)} placeholder="00.000.000/0000-00" required />
+              <input 
+                className="input-field" 
+                value={cnpj} 
+                onChange={e => setCnpj(maskCNPJ(e.target.value))} 
+                placeholder="00.000.000/0000-00" 
+                required 
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Endereço</label>
@@ -1636,6 +1682,17 @@ const AdminCompaniesView = () => {
         cancelText={null}
         type="success"
       />
+
+      <ConfirmModal 
+        isOpen={warningModal.isOpen}
+        onClose={() => setWarningModal({ ...warningModal, isOpen: false })}
+        onConfirm={() => setWarningModal({ ...warningModal, isOpen: false })}
+        title={warningModal.title}
+        message={warningModal.message}
+        confirmText="OK"
+        cancelText={null}
+        type="danger"
+      />
     </div>
   );
 };
@@ -1708,7 +1765,7 @@ const ProfileView = ({ user, onUpdate }: { user: User, onUpdate: (user: User) =>
                 <input 
                   className="input-field" 
                   value={phone} 
-                  onChange={e => setPhone(e.target.value)} 
+                  onChange={e => setPhone(maskPhone(e.target.value))} 
                   placeholder="(00) 00000-0000"
                 />
               </div>
@@ -1783,6 +1840,7 @@ const AdminUsersView = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [errorModal, setErrorModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
   const [successModal, setSuccessModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
+  const [warningModal, setWarningModal] = useState<{ isOpen: boolean, title: string, message: string }>({ isOpen: false, title: '', message: '' });
   const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean, userId: string | null }>({ isOpen: false, userId: null });
   const [error, setError] = useState<string | null>(null);
 
@@ -1810,18 +1868,30 @@ const AdminUsersView = () => {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const userData: User = { 
-      id: editingUser ? editingUser.id : 'new', 
-      name, 
-      email, 
-      password: password || editingUser?.password || '123', 
-      role, 
-      companyId,
-      phone,
-      address
-    };
-    
+
     try {
+      // Check if email already exists
+      const emailExists = await supabaseService.checkEmailExists(email, editingUser?.id === 'new' ? undefined : editingUser?.id);
+      if (emailExists) {
+        setWarningModal({
+          isOpen: true,
+          title: 'E-mail já cadastrado',
+          message: 'Este e-mail já está sendo utilizado por outro usuário. Por favor, utilize um e-mail diferente.'
+        });
+        return;
+      }
+
+      const userData: User = { 
+        id: editingUser ? editingUser.id : 'new', 
+        name, 
+        email, 
+        password: password || editingUser?.password || '123', 
+        role, 
+        companyId,
+        phone,
+        address
+      };
+      
       await supabaseService.saveUser(userData);
       // Refresh list to get the real ID from database if it was a new user
       await fetchData();
@@ -1897,7 +1967,12 @@ const AdminUsersView = () => {
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Telefone</label>
-              <input className="input-field" value={phone} onChange={e => setPhone(e.target.value)} placeholder="(00) 00000-0000" />
+              <input 
+                className="input-field" 
+                value={phone} 
+                onChange={e => setPhone(maskPhone(e.target.value))} 
+                placeholder="(00) 00000-0000" 
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Endereço</label>
@@ -1992,6 +2067,17 @@ const AdminUsersView = () => {
         confirmText="OK"
         cancelText={null}
         type="success"
+      />
+
+      <ConfirmModal 
+        isOpen={warningModal.isOpen}
+        onClose={() => setWarningModal({ ...warningModal, isOpen: false })}
+        onConfirm={() => setWarningModal({ ...warningModal, isOpen: false })}
+        title={warningModal.title}
+        message={warningModal.message}
+        confirmText="OK"
+        cancelText={null}
+        type="danger"
       />
     </div>
   );

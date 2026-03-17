@@ -40,6 +40,20 @@ export const supabaseService = {
       .eq('id', id);
     if (error) throw error;
   },
+  checkCNPJExists: async (cnpj: string, excludeId?: string): Promise<boolean> => {
+    let query = supabase
+      .from('companies')
+      .select('id')
+      .eq('cnpj', cnpj);
+    
+    if (excludeId) {
+      query = query.neq('id', excludeId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data && data.length > 0);
+  },
 
   // Users
   getUsers: async (): Promise<User[]> => {
@@ -89,6 +103,20 @@ export const supabaseService = {
       .delete()
       .eq('id', id);
     if (error) throw error;
+  },
+  checkEmailExists: async (email: string, excludeId?: string): Promise<boolean> => {
+    let query = supabase
+      .from('users')
+      .select('id')
+      .eq('email', email);
+    
+    if (excludeId) {
+      query = query.neq('id', excludeId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data && data.length > 0);
   },
 
   // Time Entries
