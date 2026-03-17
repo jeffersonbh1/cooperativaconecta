@@ -31,7 +31,8 @@ import {
   AlertCircle,
   Heart,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -155,6 +156,39 @@ const Modal = ({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
     )}
   </AnimatePresence>
 );
+
+const InfoTooltip = ({ title, content, children }: { title: string, content: string, children: React.ReactNode }) => {
+  const [show, setShow] = useState(false);
+  
+  return (
+    <div 
+      className="relative inline-block" 
+      onMouseEnter={() => setShow(true)} 
+      onMouseLeave={() => setShow(false)}
+    >
+      {children}
+      <AnimatePresence>
+        {show && (
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            className="absolute bottom-full right-0 mb-3 w-72 p-5 bg-white border border-slate-100 rounded-2xl shadow-2xl z-[100] pointer-events-none"
+          >
+            <div className="flex items-center gap-2 mb-2 text-indigo-600">
+              <Info size={18} />
+              <span className="text-sm font-bold">{title}</span>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              {content}
+            </p>
+            <div className="absolute top-full right-4 w-3 h-3 bg-white border-r border-b border-slate-100 rotate-45 -mt-1.5"></div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
 
 const ConfirmModal = ({ 
   isOpen, 
@@ -532,6 +566,17 @@ const DashboardView = () => {
 
   const health = getHealthStatus(stats.healthScore);
 
+  const INDICATOR_RULES = {
+    workedDays: "Contagem de dias únicos que possuem pelo menos um registro de ponto no período selecionado.",
+    arrearsDays: "Contagem de dias úteis (Segunda a Sexta) desde o início do mês até hoje (ou fim do mês) em que pelo menos um funcionário filtrado não registrou ponto.",
+    overtime: "Soma dos minutos que excedem a jornada padrão de 8 horas (480 min) por funcionário em cada dia.",
+    average: "Total de minutos trabalhados no período dividido pelo número de dias com registro.",
+    weeklyChart: "Soma das horas normais e extras agrupadas por semana (domingo a sábado).",
+    overtimeChart: "Visualização da tendência de acúmulo de horas extras ao longo das semanas do mês.",
+    healthScore: "Inicia em 100 pontos. Subtrai 2 pontos por cada hora extra, 5 pontos por cada dia com jornada > 10h e 20 pontos se a média diária for superior a 9h.",
+    distribution: "Categorização dos dias trabalhados: Normal (até 8h), Extra (8h a 10h) e Crítico (acima de 10h de jornada)."
+  };
+
   return (
     <div className="space-y-8 pb-12">
       {/* Header */}
@@ -583,7 +628,12 @@ const DashboardView = () => {
 
       {/* Main Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm relative group">
+          <div className="absolute top-4 right-4 z-10">
+            <InfoTooltip title="Dias Trabalhados" content={INDICATOR_RULES.workedDays}>
+              <Info size={16} className="text-slate-300 hover:text-indigo-500 transition-colors cursor-help" />
+            </InfoTooltip>
+          </div>
           <div className="flex items-center justify-between mb-4">
             <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
               <Calendar size={20} />
@@ -594,7 +644,12 @@ const DashboardView = () => {
           <p className="text-sm text-slate-500">Dias trabalhados</p>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm relative group">
+          <div className="absolute top-4 right-4 z-10">
+            <InfoTooltip title="Dias em Atraso" content={INDICATOR_RULES.arrearsDays}>
+              <Info size={16} className="text-slate-300 hover:text-indigo-500 transition-colors cursor-help" />
+            </InfoTooltip>
+          </div>
           <div className="flex items-center justify-between mb-4">
             <div className="w-10 h-10 bg-red-50 text-red-600 rounded-xl flex items-center justify-center">
               <AlertCircle size={20} />
@@ -605,7 +660,12 @@ const DashboardView = () => {
           <p className="text-sm text-slate-500">Dias em atraso</p>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm relative group">
+          <div className="absolute top-4 right-4 z-10">
+            <InfoTooltip title="Horas Extras" content={INDICATOR_RULES.overtime}>
+              <Info size={16} className="text-slate-300 hover:text-indigo-500 transition-colors cursor-help" />
+            </InfoTooltip>
+          </div>
           <div className="flex items-center justify-between mb-4">
             <div className="w-10 h-10 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
               <TrendingUp size={20} />
@@ -616,7 +676,12 @@ const DashboardView = () => {
           <p className="text-sm text-slate-500">Horas extras no mês</p>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
+        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm relative group">
+          <div className="absolute top-4 right-4 z-10">
+            <InfoTooltip title="Média de Horas" content={INDICATOR_RULES.average}>
+              <Info size={16} className="text-slate-300 hover:text-indigo-500 transition-colors cursor-help" />
+            </InfoTooltip>
+          </div>
           <div className="flex items-center justify-between mb-4">
             <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center">
               <Clock size={20} />
@@ -631,45 +696,59 @@ const DashboardView = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Charts Section */}
         <div className="lg:col-span-2 space-y-8">
-          <Card title="Horas Trabalhadas por Semana">
-            <div className="h-80 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stats.weeklyData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
-                  <Tooltip 
-                    contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                    cursor={{fill: '#f8fafc'}}
-                  />
-                  <Bar dataKey="horas" fill="#4f46e5" radius={[4, 4, 0, 0]} name="Horas Normais" />
-                  <Bar dataKey="extra" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Horas Extras" />
-                </BarChart>
-              </ResponsiveContainer>
+          <div className="relative group">
+            <div className="absolute top-5 right-6 z-10">
+              <InfoTooltip title="Horas por Semana" content={INDICATOR_RULES.weeklyChart}>
+                <Info size={16} className="text-slate-300 hover:text-indigo-500 transition-colors cursor-help" />
+              </InfoTooltip>
             </div>
-          </Card>
+            <Card title="Horas Trabalhadas por Semana">
+              <div className="h-80 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={stats.weeklyData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                    <Tooltip 
+                      contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                      cursor={{fill: '#f8fafc'}}
+                    />
+                    <Bar dataKey="horas" fill="#4f46e5" radius={[4, 4, 0, 0]} name="Horas Normais" />
+                    <Bar dataKey="extra" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Horas Extras" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+          </div>
 
-          <Card title="Evolução de Horas Extras">
-            <div className="h-80 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={stats.weeklyData}>
-                  <defs>
-                    <linearGradient id="colorExtra" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
-                  <Tooltip 
-                    contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
-                  />
-                  <Area type="monotone" dataKey="extra" stroke="#f59e0b" fillOpacity={1} fill="url(#colorExtra)" strokeWidth={3} />
-                </AreaChart>
-              </ResponsiveContainer>
+          <div className="relative group">
+            <div className="absolute top-5 right-6 z-10">
+              <InfoTooltip title="Evolução de Extras" content={INDICATOR_RULES.overtimeChart}>
+                <Info size={16} className="text-slate-300 hover:text-indigo-500 transition-colors cursor-help" />
+              </InfoTooltip>
             </div>
-          </Card>
+            <Card title="Evolução de Horas Extras">
+              <div className="h-80 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={stats.weeklyData}>
+                    <defs>
+                      <linearGradient id="colorExtra" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                    <Tooltip 
+                      contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                    />
+                    <Area type="monotone" dataKey="extra" stroke="#f59e0b" fillOpacity={1} fill="url(#colorExtra)" strokeWidth={3} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+          </div>
 
           {/* Smart Alerts */}
           <div className="space-y-4">
@@ -695,7 +774,12 @@ const DashboardView = () => {
         {/* Sidebar Section */}
         <div className="space-y-8">
           {/* Health Score Card */}
-          <div className="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center">
+          <div className="bg-white p-8 rounded-2xl border border-slate-100 shadow-sm text-center relative group">
+            <div className="absolute top-4 right-4 z-10">
+              <InfoTooltip title="Saúde da Jornada" content={INDICATOR_RULES.healthScore}>
+                <Info size={16} className="text-slate-300 hover:text-indigo-500 transition-colors cursor-help" />
+              </InfoTooltip>
+            </div>
             <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6">Saúde da Jornada</h3>
             <div className="relative inline-flex items-center justify-center mb-6">
               <svg className="w-32 h-32 transform -rotate-90">
@@ -735,41 +819,48 @@ const DashboardView = () => {
           </div>
 
           {/* Distribution Chart */}
-          <Card title="Distribuição de Jornada">
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={stats.distribution}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {[
-                      <Cell key="0" fill="#10b981" />,
-                      <Cell key="1" fill="#f59e0b" />,
-                      <Cell key="2" fill="#ef4444" />
-                    ]}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+          <div className="relative group">
+            <div className="absolute top-5 right-6 z-10">
+              <InfoTooltip title="Distribuição de Jornada" content={INDICATOR_RULES.distribution}>
+                <Info size={16} className="text-slate-300 hover:text-indigo-500 transition-colors cursor-help" />
+              </InfoTooltip>
             </div>
-            <div className="space-y-2 mt-4">
-              {stats.distribution.map((item, i) => (
-                <div key={item.name} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${['bg-emerald-500', 'bg-amber-500', 'bg-red-500'][i]}`}></div>
-                    <span className="text-slate-600">{item.name}</span>
+            <Card title="Distribuição de Jornada">
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={stats.distribution}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={80}
+                      paddingAngle={5}
+                      dataKey="value"
+                    >
+                      {[
+                        <Cell key="0" fill="#10b981" />,
+                        <Cell key="1" fill="#f59e0b" />,
+                        <Cell key="2" fill="#ef4444" />
+                      ]}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="space-y-2 mt-4">
+                {stats.distribution.map((item, i) => (
+                  <div key={item.name} className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full ${['bg-emerald-500', 'bg-amber-500', 'bg-red-500'][i]}`}></div>
+                      <span className="text-slate-600">{item.name}</span>
+                    </div>
+                    <span className="font-bold text-slate-800">{item.value} dias</span>
                   </div>
-                  <span className="font-bold text-slate-800">{item.value} dias</span>
-                </div>
-              ))}
-            </div>
-          </Card>
+                ))}
+              </div>
+            </Card>
+          </div>
         </div>
       </div>
 
