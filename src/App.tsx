@@ -274,27 +274,58 @@ const DashboardView = () => {
   const [selectedYear, setSelectedYear] = useState(getYear(new Date()));
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('all');
   const [selectedUserId, setSelectedUserId] = useState<string>('all');
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [errorModal, setErrorModal] = useState<{ isOpen: boolean, message: string }>({ isOpen: false, message: '' });
+  const [confirmDelete, setConfirmDelete] = useState<{ isOpen: boolean, entryId: string | null }>({ isOpen: false, entryId: null });
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [entriesData, usersData, companiesData] = await Promise.all([
+        supabaseService.getEntries(),
+        supabaseService.getUsers(),
+        supabaseService.getCompanies()
+      ]);
+      setEntries(entriesData);
+      setUsers(usersData);
+      setCompanies(companiesData);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        const [entriesData, usersData, companiesData] = await Promise.all([
-          supabaseService.getEntries(),
-          supabaseService.getUsers(),
-          supabaseService.getCompanies()
-        ]);
-        setEntries(entriesData);
-        setUsers(usersData);
-        setCompanies(companiesData);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchData();
   }, []);
+
+  const toggleRow = (key: string) => {
+    const newExpanded = new Set(expandedRows);
+    if (newExpanded.has(key)) {
+      newExpanded.delete(key);
+    } else {
+      newExpanded.add(key);
+    }
+    setExpandedRows(newExpanded);
+  };
+
+  const handleDeleteEntry = async (id: string) => {
+    try {
+      setDeletingId(id);
+      await supabaseService.deleteEntry(id);
+      setEntries(prev => prev.filter(e => e.id !== id));
+    } catch (err: any) {
+      console.error('Delete error in dashboard:', err);
+      setErrorModal({ 
+        isOpen: true, 
+        message: `ERRO DO BANCO DE DADOS:\n\nCódigo: ${err.code || 'N/A'}\nMensagem: ${err.message || 'Erro desconhecido'}\nDetalhes: ${err.details || 'Nenhum detalhe adicional'}` 
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const filteredUsers = useMemo(() => {
     if (selectedCompanyId === 'all') return users;
@@ -448,9 +479,42 @@ const DashboardView = () => {
       weeklyData,
       distribution,
       alerts,
-      healthScore
+      healthScore,
+      filteredEntries
     };
   }, [entries, users, selectedMonth, selectedYear, selectedCompanyId, selectedUserId]);
+
+  const groupedEntries = useMemo(() => {
+    const groups: { [key: string]: { 
+      date: string, 
+      userId: string, 
+      entries: TimeEntry[], 
+      totalMinutes: number,
+      firstStartTime: string,
+      lastEndTime: string
+    } } = {};
+    
+    stats.filteredEntries.forEach(e => {
+      const key = `${e.userId}_${e.date}`;
+      if (!groups[key]) {
+        groups[key] = { 
+          date: e.date, 
+          userId: e.userId, 
+          entries: [], 
+          totalMinutes: 0,
+          firstStartTime: e.startTime,
+          lastEndTime: e.endTime
+        };
+      }
+      groups[key].entries.push(e);
+      groups[key].totalMinutes += e.totalMinutes;
+      
+      if (e.startTime < groups[key].firstStartTime) groups[key].firstStartTime = e.startTime;
+      if (e.endTime > groups[key].lastEndTime) groups[key].lastEndTime = e.endTime;
+    });
+    
+    return Object.values(groups).sort((a, b) => a.date.localeCompare(b.date));
+  }, [stats.filteredEntries]);
 
   if (loading) {
     return (
@@ -708,6 +772,139 @@ const DashboardView = () => {
           </Card>
         </div>
       </div>
+
+      {/* Tabela de Apontamentos */}
+      <div className="mt-8 space-y-4">
+        <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest px-2">Detalhamento dos Apontamentos</h3>
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50/50 text-xs text-slate-400 font-medium border-b border-slate-100">
+                  <th className="px-6 py-4 font-normal w-10"></th>
+                  <th className="px-6 py-4 font-normal">Empresa</th>
+                  <th className="px-6 py-4 font-normal">Funcionário</th>
+                  <th className="px-6 py-4 font-normal">Data</th>
+                  <th className="px-6 py-4 font-normal">Primeira Entrada</th>
+                  <th className="px-6 py-4 font-normal">Última Saída</th>
+                  <th className="px-6 py-4 font-normal">Total do Dia</th>
+                  <th className="px-6 py-4 font-normal text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {groupedEntries.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="py-12 text-center text-slate-400">
+                      Nenhum registro encontrado para este período
+                    </td>
+                  </tr>
+                ) : (
+                  groupedEntries.map(group => {
+                    const groupKey = `${group.userId}-${group.date}`;
+                    const isExpanded = expandedRows.has(groupKey);
+                    const sortedEntries = [...group.entries].sort((a, b) => a.startTime.localeCompare(b.startTime));
+                    const u = users.find(usr => usr.id === group.userId);
+                    const c = companies.find(comp => comp.id === u?.companyId);
+                    
+                    let rowColor = "";
+                    if (group.totalMinutes > 480) rowColor = "bg-red-50/50";
+                    else if (group.totalMinutes < 480) rowColor = "bg-yellow-50/50";
+
+                    return (
+                      <React.Fragment key={groupKey}>
+                        <tr className={`${rowColor} transition-colors hover:bg-slate-50/80 cursor-pointer`} onClick={() => toggleRow(groupKey)}>
+                          <td className="px-6 py-4">
+                            {isExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600">{c?.name}</td>
+                          <td className="px-6 py-4 text-sm text-slate-600">{u?.name}</td>
+                          <td className="px-6 py-4 text-sm text-slate-600">
+                            {format(safeParseISO(group.date), 'dd/MM/yyyy')}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-600 font-mono">{group.firstStartTime}</td>
+                          <td className="px-6 py-4 text-sm text-slate-600 font-mono">{group.lastEndTime}</td>
+                          <td className="px-6 py-4 text-sm font-bold text-indigo-600">
+                            {formatMinutes(group.totalMinutes)}
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <span className="text-xs text-slate-400">{group.entries.length} apontamentos</span>
+                          </td>
+                        </tr>
+                        {isExpanded && (
+                          <tr>
+                            <td colSpan={10} className="px-6 py-0 bg-slate-50/30">
+                              <div className="py-4 space-y-2">
+                                <div className="grid grid-cols-4 gap-4 text-[10px] uppercase tracking-wider font-bold text-slate-400 px-4 mb-2">
+                                  <div>Entrada</div>
+                                  <div>Saída</div>
+                                  <div>Duração</div>
+                                  <div className="text-right">Ações</div>
+                                </div>
+                                {sortedEntries.map(entry => (
+                                  <div key={entry.id} className="grid grid-cols-4 gap-4 items-center bg-white p-3 rounded-lg border border-slate-100 shadow-sm">
+                                    <div className="text-sm font-mono text-slate-600">{entry.startTime}</div>
+                                    <div className="text-sm font-mono text-slate-600">{entry.endTime}</div>
+                                    <div className="text-sm text-slate-600">{formatMinutes(entry.totalMinutes)}</div>
+                                    <div className="text-right">
+                                      <button 
+                                        disabled={deletingId === entry.id}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setConfirmDelete({ isOpen: true, entryId: entry.id });
+                                        }}
+                                        className={`text-slate-300 hover:text-red-500 transition-colors ${deletingId === entry.id ? 'opacity-50' : ''}`}
+                                      >
+                                        <Trash2 size={16} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+          
+          <div className="bg-indigo-50/30 px-6 py-4 flex justify-between items-center border-t border-slate-100">
+            <span className="text-sm text-slate-500">
+              Total do período ({stats.filteredEntries.length} registros)
+            </span>
+            <span className="text-xl font-bold text-indigo-700">
+              {formatMinutes(stats.filteredEntries.reduce((acc, curr) => acc + curr.totalMinutes, 0))}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <Modal 
+        isOpen={errorModal.isOpen} 
+        onClose={() => setErrorModal({ ...errorModal, isOpen: false })} 
+        title="Erro no Dashboard"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 text-red-600">
+            <XCircle size={24} />
+            <p className="font-bold">Falha no Banco de Dados</p>
+          </div>
+          <div className="bg-slate-900 text-green-400 p-4 rounded-lg text-xs overflow-auto max-h-60 font-mono leading-relaxed">
+            {errorModal.message}
+          </div>
+        </div>
+      </Modal>
+
+      <ConfirmModal 
+        isOpen={confirmDelete.isOpen}
+        onClose={() => setConfirmDelete({ isOpen: false, entryId: null })}
+        onConfirm={() => confirmDelete.entryId && handleDeleteEntry(confirmDelete.entryId)}
+        title="Confirmar Exclusão"
+        message="Deseja realmente excluir este apontamento?"
+      />
     </div>
   );
 };
